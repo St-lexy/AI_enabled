@@ -123,39 +123,50 @@ TARGET_LAYER_GETTER = {
 }
 
 def generate_gradcam(model, img_tensor, name):
-    gradients, activations = [], []
-
-    def backward_hook(module, grad_in, grad_out):
-        gradients.append(grad_out[0])
+    """Generates Grad-CAM without inplace backward hook errors."""
+    activations = []
 
     def forward_hook(module, inp, out):
-        activations.append(out)
+        # .clone() creates a safe copy so inplace operations don't trigger PyTorch view errors
+        activations.append(out.clone())
 
     target_layer = TARGET_LAYER_GETTER[name](model)
     handle_f = target_layer.register_forward_hook(forward_hook)
-    handle_b = target_layer.register_full_backward_hook(backward_hook)
 
-    # Enable grad specifically for CAM calculation
+    # Enable grad specifically for CAM
     with torch.enable_grad():
         input_var = img_tensor.unsqueeze(0).to(DEVICE)
         input_var.requires_grad = True
-        out = model(input_var)
-        model.zero_grad()
-        out[0, 0].backward()
+        
+        # Forward pass
+        logits = model(input_var)
+        score = logits[0, 0]
+        
+        # Extract feature maps captured during forward pass
+        acts = activations[0]
+        
+        # Compute gradients directly with respect to feature maps (bypasses backward hooks completely)
+        grads = torch.autograd.grad(outputs=score, inputs=acts, retain_graph=True)[0]
 
-    grads = gradients[0][0]
-    acts = activations[0][0]
-    weights = grads.mean(dim=(1, 2))
+    # Clean up hook
+    handle_f.remove()
+
+    # Process activations and gradients
+    grads_np = grads[0].cpu().detach().numpy()
+    acts_np = acts[0].cpu().detach().numpy()
     
-    cam = torch.relu((weights[:, None, None] * acts).sum(0))
-    cam = cam.cpu().detach().numpy()
+    weights = np.mean(grads_np, axis=(1, 2))
+    
+    cam = np.zeros(acts_np.shape[1:], dtype=np.float32)
+    for i, w in enumerate(weights):
+        cam += w * acts_np[i, :, :]
+
+    cam = np.maximum(cam, 0)
     cam = cv2.resize(cam, (224, 224))
     cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
 
-    handle_f.remove()
-    handle_b.remove()
-
     return cam
+
 
 
 # ---------------------------------------------------------
@@ -226,15 +237,16 @@ with tab1:
                 heatmap = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
                 heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
                 
-                # Format original image for overlay
+                # Format processed image for overlay
                 img_np = input_tensor.cpu().numpy().transpose(1, 2, 0)
                 img_np = (img_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])).clip(0, 1)
                 img_np = np.uint8(255 * img_np)
 
                 overlay = cv2.addWeighted(img_np, 0.6, heatmap, 0.4, 0)
-                st.image(overlay, caption="Grad-CAM Overlay", use_container_width=True)
+                st.image(overlay, caption="Grad-CAM Lesion Heatmap Overlay", use_container_width=True)
             except Exception as e:
                 st.warning(f"Could not render Grad-CAM heatmap: {e}")
+
 
 # ---------------------------------------------------------
 # TAB 2: MODEL BENCHMARKING
