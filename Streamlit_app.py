@@ -135,9 +135,13 @@ def generate_gradcam(model, img_tensor, name):
     handle_f = target_layer.register_forward_hook(forward_hook)
     handle_b = target_layer.register_full_backward_hook(backward_hook)
 
-    out = model(img_tensor.unsqueeze(0).to(DEVICE))
-    model.zero_grad()
-    out[0, 0].backward()
+    # Enable grad specifically for CAM calculation
+    with torch.enable_grad():
+        input_var = img_tensor.unsqueeze(0).to(DEVICE)
+        input_var.requires_grad = True
+        out = model(input_var)
+        model.zero_grad()
+        out[0, 0].backward()
 
     grads = gradients[0][0]
     acts = activations[0][0]
@@ -152,6 +156,7 @@ def generate_gradcam(model, img_tensor, name):
     handle_b.remove()
 
     return cam
+
 
 # ---------------------------------------------------------
 # NAVIGATION TABS
@@ -188,14 +193,15 @@ with tab1:
             input_tensor = eval_transform(raw_image)
 
             # Pass through model for sigmoid probability
+                        # Run forward pass cleanly without setting input_tensor.requires_grad
             input_tensor_device = input_tensor.unsqueeze(0).to(DEVICE)
-            input_tensor_device.requires_grad = True
 
-            logits = model(input_tensor_device)
-            prob_malignant = torch.sigmoid(logits).item()
-            prob_benign = 1.0 - prob_malignant
+            with torch.no_grad():
+                logits = model(input_tensor_device)
+                prob_malignant = torch.sigmoid(logits).item()
+                prob_benign = 1.0 - prob_malignant
 
-            # Class determination (0.5 cutoff default or dynamic threshold)
+            # Class determination
             pred_class = "MALIGNANT" if prob_malignant >= 0.5 else "BENIGN"
             confidence = (prob_malignant if pred_class == "MALIGNANT" else prob_benign) * 100
 
@@ -210,6 +216,7 @@ with tab1:
             st.write("**Probability Distribution:**")
             st.progress(float(prob_benign), text=f"Benign: {prob_benign*100:.1f}%")
             st.progress(float(prob_malignant), text=f"Malignant: {prob_malignant*100:.1f}%")
+
 
             # Render Grad-CAM Heatmap
             st.write("---")
