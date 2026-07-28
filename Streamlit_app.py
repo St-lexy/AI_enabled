@@ -31,12 +31,13 @@ def load_trained_model(model_name: str, device: str = "cpu"):
     and returns model in eval mode.
     """
     filename_map = {
-        "DenseNet121": "densenet121_best.pth",
-        "MobileNetV2": "mobilenet_v2_best.pth",
-        "VGG16": "vgg16_best.pth",
-        "EfficientNetB0": "efficientnet_b0_best.pth",
-        "ResNet50": "resnet50_best.pth",
-    }
+    "DenseNet121": "densenet121_best.pt",
+    "MobileNetV2": "mobilenet_v2_best.pt",
+    "VGG16": "vgg16_best.pt",
+    "EfficientNetB0": "efficientnet_b0_best.pt",
+    "ResNet50": "resnet50_best.pt",
+}
+
     
     file_name = filename_map.get(model_name)
     if not file_name:
