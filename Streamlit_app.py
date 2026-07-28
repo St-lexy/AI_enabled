@@ -123,17 +123,16 @@ TARGET_LAYER_GETTER = {
 }
 
 def generate_gradcam(model, img_tensor, name):
-    """Generates Grad-CAM without inplace backward hook errors."""
+    """Generates Grad-CAM without using backward hooks."""
     activations = []
 
     def forward_hook(module, inp, out):
-        # .clone() creates a safe copy so inplace operations don't trigger PyTorch view errors
-        activations.append(out.clone())
+        # Detach and clone to ensure no in-place modifications interfere with autograd
+        activations.append(out)
 
     target_layer = TARGET_LAYER_GETTER[name](model)
     handle_f = target_layer.register_forward_hook(forward_hook)
 
-    # Enable grad specifically for CAM
     with torch.enable_grad():
         input_var = img_tensor.unsqueeze(0).to(DEVICE)
         input_var.requires_grad = True
@@ -145,13 +144,12 @@ def generate_gradcam(model, img_tensor, name):
         # Extract feature maps captured during forward pass
         acts = activations[0]
         
-        # Compute gradients directly with respect to feature maps (bypasses backward hooks completely)
+        # Calculate gradients directly on feature maps
         grads = torch.autograd.grad(outputs=score, inputs=acts, retain_graph=True)[0]
 
-    # Clean up hook
     handle_f.remove()
 
-    # Process activations and gradients
+    # Process numpy arrays safely
     grads_np = grads[0].cpu().detach().numpy()
     acts_np = acts[0].cpu().detach().numpy()
     
@@ -166,7 +164,6 @@ def generate_gradcam(model, img_tensor, name):
     cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
 
     return cam
-
 
 
 # ---------------------------------------------------------
